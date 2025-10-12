@@ -452,6 +452,7 @@
         }
         #manualTransactionModal .modal-buttons button {
             flex: 1;
+	margin-top: 20px;
         }
         
         /* Ensure split buttons in modal don't stretch vertically */
@@ -627,40 +628,34 @@
 <div id="customSplitModal" class="modal">
     <div class="modal-content">
         <span class="close-btn" onclick="closeModal('customSplitModal')">&times;</span>
-        <h2>Split Transaction</h2>
+        <h2>Custom Split: Set My Total</h2>
 
         <div class="modal-details">
             <div><strong>Date:</strong> <span id="modal-date"></span></div>
-            <div><strong>Description:</b> <span id="modal-description"></span></div>
-            <div><strong>Category:</b> <span id="modal-category"></span></div>
-            <div><strong>Original Amount:</b> <span id="modal-original-amount" style="font-weight: bold;">$0.00</span></div>
+            <div><strong>Description:</strong> <span id="modal-description"></span></div>
+            <div><strong>Category:</strong> <span id="modal-category"></span></div>
+            <div><strong>Original Amount:</strong> <span id="modal-original-amount" style="font-weight: bold;">$0.00</span></div>
         </div>
 
         <div class="modal-field">
-            <label for="split-ways">Total Number of Ways to Split:</label>
-            <input type="number" id="split-ways" value="2" min="1" onchange="validateSplitWays()">
+            <label style="font-weight: 600;">Transaction Type:</label>
+            <div style="display: flex; gap: 20px;">
+                <label><input type="radio" name="custom-type" value="transaction" checked> Transaction (Expense)</label>
+                <label><input type="radio" name="custom-type" value="refund"> Refund (Credit)</label>
+            </div>
         </div>
-
+        
         <div class="modal-field">
-            <label for="split-type">Split Type:</label>
-            <select id="split-type" onchange="toggleCustomPortionField()">
-                <option value="even">Even Split</option>
-                <option value="custom">Custom Split</option>
-            </select>
-        </div>
-
-        <div class="modal-field" id="custom-portion-field" style="display: none;">
-            <label for="my-custom-portion">Your Custom Portion (My Total):</label>
-            <input type="number" id="my-custom-portion" placeholder="e.g., 5.00" step="0.01" min="0">
+            <label for="custom-amount-input" style="font-weight: 600;">Amount to Assign to My Total (Positive Number Only):</label>
+            <input type="number" id="custom-amount-input" placeholder="e.g., 55.75" step="0.01" min="0">
         </div>
 
         <div class="modal-buttons">
-            <button onclick="applyCustomSplit()" class="btn-split-half">Apply Split</button>
+            <button onclick="applyCustomSplit()" class="btn-full" style="margin-bottom: 10px; margin-top:25px;">Apply Custom Amount</button>
             <button onclick="closeModal('customSplitModal')" class="btn-na">Cancel</button>
         </div>
     </div>
 </div>
-
 <div id="manualTransactionModal" class="modal" data-context="add">
     <div class="modal-content">
         <span class="close-btn" onclick="closeModal('manualTransactionModal')">&times;</span>
@@ -730,7 +725,7 @@
         </div>
 
         <div class="modal-buttons" style="margin-top: 20px;">
-            <button onclick="addNewCategory()" class="btn-full" style="background-color: #2473BC;">Add Category</button>
+            <button onclick="addNewCategory()" class="btn-full" style="background-color: #2473BC; margin-bottom: 10px; margin-top:25px;">Add Category</button>
             <button onclick="closeModal('newCategoryModal')" class="btn-na">Cancel</button>
         </div>
     </div>
@@ -945,12 +940,6 @@
             if (!myShareExcludedCategories.has(t.category.toLowerCase())) {
                 fullMyTotal += t.myTotal;
             } else {
-                // If it's a 'My Payments' or 'Transfers' credit (positive number),
-                // we DO want it in My Total to offset total due, so we must make an exception.
-                // However, based on the previous request, the intent is that these are *excluded*
-                // from the net spending total (which is what myTotal is meant to be).
-                // Reverting to the logic from the previous turn, which excludes all three:
-                // fullMyTotal += t.myTotal; // If you wanted to *include* the positive credit
                 // We do nothing if it's excluded, as handled by the IF above.
             }
         });
@@ -1492,12 +1481,9 @@
                 t.status = 'N/A';
                 t.myTotal = 0;
                 break;
-            case 'custom-split':
-                t.status = `Split ${ways} Ways`;
-                t.myTotal = parseFloat((t.originalAmount / ways).toFixed(2));
-                break;
-            case 'custom-portion':
-                t.status = 'Custom Split';
+            case 'custom-split': // This is the old custom split logic, now handled by the new modal
+            case 'custom-portion': // This is the old custom split logic, now handled by the new modal
+                t.status = 'Custom Split'; // The new custom split function will overwrite myTotal
                 t.myTotal = parseFloat(customValue);
                 break;
         }
@@ -1540,7 +1526,7 @@
         }
     }
 
-    // --- Custom Split Modal Handlers ---
+    // --- Custom Split Modal Handlers (UPDATED) ---
     
     function openCustomSplitModal(index) {
         currentTransactionIndex = index; // Store the index globally
@@ -1552,56 +1538,44 @@
         document.getElementById('modal-category').textContent = t.category;
         document.getElementById('modal-original-amount').textContent = formatCurrency(t.originalAmount);
         
-        // Reset to defaults
-        document.getElementById('split-ways').value = '2';
-        document.getElementById('split-type').value = 'even';
-        document.getElementById('custom-portion-field').style.display = 'none';
+        // Reset inputs
+        document.getElementById('custom-amount-input').value = '';
+        document.querySelector('input[name="custom-type"][value="transaction"]').checked = true;
 
         openModal('customSplitModal');
     }
     
-    function validateSplitWays() {
-        let ways = parseInt(document.getElementById('split-ways').value);
-        if (isNaN(ways) || ways < 1) {
-            document.getElementById('split-ways').value = 1;
-        }
-    }
-    
-    function toggleCustomPortionField() {
-        const type = document.getElementById('split-type').value;
-        document.getElementById('custom-portion-field').style.display = type === 'custom' ? 'block' : 'none';
-    }
-
     function applyCustomSplit() {
-        const originalAmount = displayedTransactions[currentTransactionIndex].originalAmount;
-        const splitType = document.getElementById('split-type').value;
-        const splitWays = parseInt(document.getElementById('split-ways').value);
-        const customPortion = parseFloat(document.getElementById('my-custom-portion').value);
+        const amountInput = document.getElementById('custom-amount-input');
+        const customAmountRaw = parseFloat(amountInput.value);
+        const typeSelection = document.querySelector('input[name="custom-type"]:checked').value;
 
-        let myTotal = 0;
-        let newStatus = '';
-
-        if (splitType === 'even') {
-            myTotal = parseFloat((originalAmount / splitWays).toFixed(2));
-            newStatus = `Split ${splitWays} Ways`;
-        } else { // custom
-            if (isNaN(customPortion)) {
-                alert('Please enter a valid custom portion.');
-                return;
-            }
-            myTotal = parseFloat(customPortion.toFixed(2));
-            newStatus = 'Custom Split';
+        if (isNaN(customAmountRaw) || customAmountRaw <= 0) {
+            alert('Please enter a valid positive amount.');
+            return;
         }
         
+        // The amount entered is always positive. We apply the sign based on type.
+        let myTotal;
+        
+        if (typeSelection === 'transaction') {
+            // Transaction/Expense: My Total should be negative
+            myTotal = -Math.abs(customAmountRaw);
+        } else {
+            // Refund/Credit: My Total should be positive
+            myTotal = Math.abs(customAmountRaw);
+        }
+        
+        // Apply the split
         const t = displayedTransactions[currentTransactionIndex];
         if (t) {
-            t.status = newStatus;
-            t.myTotal = myTotal;
+            t.status = 'Custom Split';
+            t.myTotal = parseFloat(myTotal.toFixed(2));
         }
         
         closeModal('customSplitModal');
 
-        // FIX: Recalculate and re-render with preserved sort state.
+        // Recalculate and re-render with preserved sort state.
         calculateTotals();
         reapplyCurrentSort(); 
     }

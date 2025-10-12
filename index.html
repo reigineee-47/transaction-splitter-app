@@ -1890,64 +1890,92 @@
 
     // --- Category Breakdown Functions ---
 
-    function applyBreakdownFilter() {
-        const preset = document.getElementById('breakdown-date-range-preset').value;
-        let startDate = null;
-        let endDate = null;
-        const now = new Date();
-        let year = now.getFullYear();
-        let month = now.getMonth();
+    // Replace the existing applyBreakdownFilter function with this:
 
-        if (preset === 'current_month') {
-            startDate = new Date(year, month, 1);
-            endDate = new Date(year, month + 1, 0);
-            endDate.setHours(23, 59, 59, 999);
-        } else if (preset === 'last_month') {
-            startDate = new Date(year, month - 1, 1);
-            endDate = new Date(year, month, 0);
-            endDate.setHours(23, 59, 59, 999);
-        }
+function applyBreakdownFilter() {
+    const preset = document.getElementById('breakdown-date-range-preset').value;
+    let startDate = null;
+    let endDate = null;
+    const now = new Date();
+    let year = now.getFullYear();
+    let month = now.getMonth();
 
-        const filteredTxns = transactions.filter(t => {
-            const date = t.dateObj;
-            if (!date) return false;
-            const meetsStart = !startDate || date >= startDate;
-            const meetsEnd = !endDate || date <= endDate;
-            return meetsStart && meetsEnd;
-        });
-
-        const breakdown = {};
-        let totalOriginalAmount = 0;
-        let totalMyShare = 0;
-
-        filteredTxns.forEach(t => {
-            const cat = t.category || 'Uncategorized';
-            if (!breakdown[cat]) {
-                breakdown[cat] = {
-                    category: cat,
-                    count: 0,
-                    originalAmount: 0,
-                    myTotal: 0
-                };
-            }
-            breakdown[cat].count++;
-            breakdown[cat].originalAmount += t.originalAmount;
-            breakdown[cat].myTotal += t.myTotal;
-
-            totalOriginalAmount += t.originalAmount;
-            totalMyShare += t.myTotal;
-        });
-
-        // Convert to array and calculate percentages
-        currentBreakdownData = Object.values(breakdown).map(item => ({
-            ...item,
-            percentage: totalOriginalAmount !== 0 ? (item.originalAmount / totalOriginalAmount) * 100 : 0
-        }));
-
-        // Now sort the data before rendering
-        sortBreakdown(breakdownSort.key);
-        renderBreakdown(currentBreakdownData.reduce((sum, item) => sum + item.originalAmount, 0), currentBreakdownData.reduce((sum, item) => sum + item.myTotal, 0));
+    if (preset === 'current_month') {
+        startDate = new Date(year, month, 1);
+        endDate = new Date(year, month + 1, 0);
+        endDate.setHours(23, 59, 59, 999);
+    } else if (preset === 'last_month') {
+        startDate = new Date(year, month - 1, 1);
+        endDate = new Date(year, month, 0);
+        endDate.setHours(23, 59, 59, 999);
     }
+
+    const EXCLUDED_FOR_CALC = "my payments"; // Category to exclude from all totals/percentages
+
+    const filteredTxns = transactions.filter(t => {
+        const date = t.dateObj;
+        if (!date) return false;
+        const meetsStart = !startDate || date >= startDate;
+        const meetsEnd = !endDate || date <= endDate;
+        return meetsStart && meetsEnd;
+    });
+
+    const breakdown = {};
+    let totalOriginalAmountForCalc = 0; // NEW: Total for calculating percentages (excludes 'my payments')
+    let totalMyShareForCalc = 0; // NEW: Total for calculating grand total in footer (excludes 'my payments')
+
+    filteredTxns.forEach(t => {
+        const cat = t.category || 'Uncategorized';
+        const isExcluded = cat.toLowerCase() === EXCLUDED_FOR_CALC;
+        
+        if (!breakdown[cat]) {
+            breakdown[cat] = {
+                category: cat,
+                count: 0,
+                originalAmount: 0,
+                myTotal: 0,
+                isExcluded: isExcluded // Mark for later rendering
+            };
+        }
+        
+        breakdown[cat].count++;
+        breakdown[cat].originalAmount += t.originalAmount;
+        breakdown[cat].myTotal += t.myTotal;
+
+        // Only include in the calculation totals if NOT the excluded category
+        if (!isExcluded) {
+            totalOriginalAmountForCalc += t.originalAmount;
+            totalMyShareForCalc += t.myTotal;
+        }
+    });
+
+    // Convert to array and calculate percentages based on totalOriginalAmountForCalc
+    currentBreakdownData = Object.values(breakdown).map(item => {
+        let percentage = 0;
+        if (!item.isExcluded && totalOriginalAmountForCalc !== 0) {
+             percentage = (item.originalAmount / totalOriginalAmountForCalc) * 100;
+        }
+        
+        // NEW: For the excluded category, force amounts and percentage to 0
+        const displayOriginalAmount = item.isExcluded ? 0 : item.originalAmount;
+        const displayMyTotal = item.isExcluded ? 0 : item.myTotal;
+        const displayPercentage = item.isExcluded ? 0 : percentage;
+
+        return {
+            ...item,
+            originalAmount: displayOriginalAmount, // This is for the item display, zeroed out if excluded
+            myTotal: displayMyTotal, // This is for the item display, zeroed out if excluded
+            percentage: displayPercentage, // This is for the item display
+            isExcluded: item.isExcluded // Keep the flag
+        };
+    });
+
+    // Now sort the data before rendering
+    sortBreakdown(breakdownSort.key);
+    
+    // Pass the totals *for calculation* to renderBreakdown for the footer
+    renderBreakdown(totalOriginalAmountForCalc, totalMyShareForCalc); 
+}
     
     function sortBreakdown(key) {
         if (breakdownSort.key === key) {
@@ -1976,40 +2004,48 @@
     }
     
     function renderBreakdown(totalOriginalAmount, totalMyShare) {
-        const tbody = document.getElementById('breakdown-body');
-        const tfoot = document.getElementById('breakdown-footer');
-        tbody.innerHTML = '';
-        tfoot.innerHTML = '';
+    const tbody = document.getElementById('breakdown-body');
+    const tfoot = document.getElementById('breakdown-footer');
+    tbody.innerHTML = '';
+    tfoot.innerHTML = '';
 
-        if (currentBreakdownData.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #666; padding: 20px;">No transactions found for the selected range.</td></tr>';
-            return;
-        }
+    if (currentBreakdownData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #666; padding: 20px;">No transactions found for the selected range.</td></tr>';
+        return;
+    }
 
-        currentBreakdownData.forEach(item => {
-            const row = tbody.insertRow();
-            
-            row.insertCell().textContent = item.category;
-            row.insertCell().textContent = item.count;
+    currentBreakdownData.forEach(item => {
+        const row = tbody.insertRow();
+        
+        row.insertCell().textContent = item.category;
+        row.insertCell().textContent = item.count;
+        
+        // Conditional display based on the isExcluded flag
+        if (item.isExcluded) {
+            row.insertCell().textContent = ''; // Percentages
+            row.insertCell().textContent = ''; // Total Original Amount
+            row.insertCell().textContent = ''; // Total My Share
+        } else {
             row.insertCell().textContent = `${item.percentage.toFixed(2)}%`;
             row.insertCell().textContent = formatCurrency(item.originalAmount);
             row.insertCell().textContent = formatCurrency(item.myTotal);
+        }
 
-            const actionCell = row.insertCell();
-            actionCell.innerHTML = `
-                <button class="btn-full action-button" onclick="openManageCategoryModal('${item.category}')" style="padding: 6px 5px; font-size: 0.8rem;">Manage</button>
-            `;
-        });
-        
-        // Render Footer Totals
-        const footerRow = tfoot.insertRow();
-        footerRow.innerHTML = `
-            <td colspan="3" style="text-align: right; font-weight: bold; background-color: #f8fbfe;">GRAND TOTAL:</td>
-            <td style="font-weight: bold; background-color: #f8fbfe;">${formatCurrency(totalOriginalAmount)}</td>
-            <td style="font-weight: bold; background-color: #f8fbfe;">${formatCurrency(totalMyShare)}</td>
-            <td style="background-color: #f8fbfe;"></td>
+        const actionCell = row.insertCell();
+        actionCell.innerHTML = `
+            <button class="btn-full action-button" onclick="openManageCategoryModal('${item.category}')" style="padding: 6px 5px; font-size: 0.8rem;">Manage</button>
         `;
-    }
+    });
+    
+    // Render Footer Totals
+    const footerRow = tfoot.insertRow();
+    footerRow.innerHTML = `
+        <td colspan="3" style="text-align: right; font-weight: bold; background-color: #f8fbfe;">GRAND TOTAL:</td>
+        <td style="font-weight: bold; background-color: #f8fbfe;">${formatCurrency(totalOriginalAmount)}</td>
+        <td style="font-weight: bold; background-color: #f8fbfe;">${formatCurrency(totalMyShare)}</td>
+        <td style="background-color: #f8fbfe;"></td>
+    `;
+}
 
     // --- Export Function ---
     function exportToCSV() {

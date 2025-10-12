@@ -922,18 +922,36 @@
         fullMyTotal = 0;
 
         // Define categories to exclude from the My Share total calculation (case-insensitive)
-        const excludedCategories = new Set([
+        const myShareExcludedCategories = new Set([
             "credit card payments",
             "transfers",
-            "my payments" // ADDED: Exclude 'my payments' category
+            "my payments"
+        ]);
+        
+        // Define categories to exclude from the Full Total calculation
+        // This is the V7 logic being reapplied to fix the grand total amount.
+        const fullTotalExcludedCategories = new Set([
+            "my payments" // Exclude 'my payments' from the Full Total sum
         ]);
         
         displayedTransactions.forEach(t => {
-            fullOriginalTotal += t.originalAmount; 
+            // 1. Calculate Full Original Total (Excluding 'My Payments' which are positive credits/deposits)
+            if (!fullTotalExcludedCategories.has(t.category.toLowerCase())) {
+                fullOriginalTotal += t.originalAmount; 
+            }
 
+            // 2. Calculate My Share Total 
             // Only include in My Total if the category is NOT in the excluded list
-            if (!excludedCategories.has(t.category.toLowerCase())) {
+            if (!myShareExcludedCategories.has(t.category.toLowerCase())) {
                 fullMyTotal += t.myTotal;
+            } else {
+                // If it's a 'My Payments' or 'Transfers' credit (positive number),
+                // we DO want it in My Total to offset total due, so we must make an exception.
+                // However, based on the previous request, the intent is that these are *excluded*
+                // from the net spending total (which is what myTotal is meant to be).
+                // Reverting to the logic from the previous turn, which excludes all three:
+                // fullMyTotal += t.myTotal; // If you wanted to *include* the positive credit
+                // We do nothing if it's excluded, as handled by the IF above.
             }
         });
         

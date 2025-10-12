@@ -860,12 +860,14 @@
         
         return isNaN(date.getTime()) ? null : date;
     }
-
-    function updateTotalsDisplay() {
-        document.getElementById('full-original-total').textContent = formatCurrency(fullOriginalTotal);
-        document.getElementById('full-my-total').textContent = formatCurrency(fullMyTotal);
+    
+    function formatDate(dateString) {
+        const date = parseDateInput(dateString); // Use parseDateInput to get a valid date
+        if (date === null) return dateString; // Return original string if unparsable
+        const options = { year: 'numeric', month: 'short', day: 'numeric' };
+        return date.toLocaleDateString('en-US', options);
     }
-
+    
     function formatCurrency(amount) {
         return new Intl.NumberFormat('en-US', {
             style: 'currency',
@@ -873,13 +875,31 @@
         }).format(amount);
     }
     
+    function updateTotalsDisplay() {
+        document.getElementById('full-original-total').textContent = formatCurrency(fullOriginalTotal);
+        document.getElementById('full-my-total').textContent = formatCurrency(fullMyTotal);
+    }
+    
+    function closeModal(id) {
+        document.getElementById(id).style.display = 'none';
+        if (id === 'customSplitModal') {
+            currentTransactionIndex = null;
+        } else if (id === 'manualTransactionModal') {
+            editingTransactionIndex = null;
+        }
+    }
+    
+    function openModal(id) {
+        document.getElementById(id).style.display = 'block';
+    }
+
     window.onclick = function(event) {
         const customSplitModal = document.getElementById('customSplitModal');
         const ccSelectModal = document.getElementById('creditCardSelectModal');
         const changeCCModal = document.getElementById('changeCCModal');
         const manualTxnModal = document.getElementById('manualTransactionModal');
         const manageCatModal = document.getElementById('manageCategoryModal');
-        const newCatModal = document.getElementById('newCategoryModal'); // NEW MODAL
+        const newCatModal = document.getElementById('newCategoryModal'); 
         
         if (event.target == customSplitModal) {
             closeModal('customSplitModal');
@@ -891,9 +911,64 @@
              closeModal('manualTransactionModal');
         } else if (event.target == manageCatModal) {
              closeModal('manageCategoryModal');
-        } else if (event.target == newCatModal) { // NEW CHECK
+        } else if (event.target == newCatModal) { 
              closeModal('newCategoryModal');
         }
+    }
+
+    // NEW FUNCTION: Calculates totals based on currently filtered/displayed transactions
+    function calculateTotals() {
+        fullOriginalTotal = 0;
+        fullMyTotal = 0;
+
+        // Define categories to exclude from the My Share total calculation (case-insensitive)
+        const excludedCategories = new Set([
+            "credit card payments",
+            "transfers",
+            "my payments" // ADDED: Exclude 'my payments' category
+        ]);
+        
+        displayedTransactions.forEach(t => {
+            fullOriginalTotal += t.originalAmount; 
+
+            // Only include in My Total if the category is NOT in the excluded list
+            if (!excludedCategories.has(t.category.toLowerCase())) {
+                fullMyTotal += t.myTotal;
+            }
+        });
+        
+        updateTotalsDisplay();
+    }
+    
+    // NEW FUNCTION - CORE FIX: Re-sorts displayedTransactions using the current global sort state.
+    // Does NOT flip the direction, thus preserving the user's view.
+    function reapplyCurrentSort() {
+        const key = transactionSort.key;
+        const direction = transactionSort.direction;
+        
+        displayedTransactions.sort((a, b) => {
+            const aVal = a[key];
+            const bVal = b[key];
+            let comparison = 0;
+
+            if (key === 'dateObj') {
+                const aTime = aVal ? aVal.getTime() : 0;
+                const bTime = bVal ? bVal.getTime() : 0;
+                comparison = aTime - bTime;
+            } else if (typeof aVal === 'number' && typeof bVal === 'number') {
+                comparison = aVal - bVal;
+            } else {
+                // Handle null/undefined values gracefully
+                const strA = String(aVal || '');
+                const strB = String(bVal || '');
+                comparison = strA.localeCompare(strB);
+            }
+            
+            return direction === 'asc' ? comparison : -comparison;
+        });
+        
+        updateSortIndicators('transactions-list', transactionSort);
+        renderTransactions();
     }
     
     // --- End Utility Functions ---
@@ -1070,23 +1145,23 @@
             const fileNameToDelete = fileEntry.fileName;
 
             // Remove transactions associated with the file
-            transactions = transactions.filter(t => t.fileName !== fileNameToDelete);
-            
+            transactions = transactions.filter(t => t.fileName !== fileNameToDelete); 
+
             // Remove the file entry from history
             importedFilesHistory = importedFilesHistory.filter(f => f.id !== fileId);
         }
-
+        
         // Recalculate unique categories after deletion
         uniqueCategories.clear();
         transactions.forEach(t => {
             if (t.category) uniqueCategories.add(t.category);
         });
-
+        
         renderImportsHistory();
         applyDateFilter(); // Re-render transactions
         applyBreakdownFilter(); // Update breakdown
     }
-
+    
     function parseCSV(csvData, creditCard, fileName, importType) {
         const lines = csvData.trim().split('\n');
         if (lines.length <= 1) {
@@ -1094,7 +1169,7 @@
             return [];
         }
 
-        const EXCLUDED_CATEGORIES = ["credit card payments", "transfers"]; 
+        const EXCLUDED_CATEGORIES = ["credit card payments", "transfers"];
 
         const parseLine = (line) => {
             const result = [];
@@ -1132,39 +1207,37 @@
         const dateIndex = headerMap['date'];
         const descIndex = headerMap['description'];
         const categoryIndex = headerMap['category'];
-        
         // Check for 'amount' first, then fallback to 'original amount' for compatibility
         const amountIndex = headerMap['amount'] !== undefined ? headerMap['amount'] : headerMap['original amount'];
-        
-        const ccCsvIndex = headerMap['credit card from csv']; 
-        
+        const ccCsvIndex = headerMap['credit card from csv'];
+
         // INDICES FOR RE-IMPORTING OLD/EXPORTED DATA
         const myTotalIndex = headerMap['my total'];
-        const statusIndex = headerMap['split status']; 
-        const notesIndex = headerMap['notes']; 
+        const statusIndex = headerMap['split status'];
+        const notesIndex = headerMap['notes'];
 
         if (dateIndex === undefined || amountIndex === undefined) {
             alert(`File "${fileName}" skipped: CSV must contain 'Date' and one of 'Amount' or 'Original Amount' columns (case-insensitive).`);
             return [];
         }
-        
+
         dataLines.forEach(line => {
             const values = parseLine(line);
             if (values.length > 0) {
                 const amountStr = values[amountIndex] || '0';
                 const originalAmount = parseFloat(amountStr.replace(/[^0-9.-]/g, '')) || 0;
-                
+
                 if (originalAmount === 0 && amountStr.replace(/[^0-9.-]/g, '').trim() !== '0') return;
 
                 const category = (values[categoryIndex] || 'Uncategorized').trim(); // Trim category
-                
+
                 // Exclude "credit card payments" and "transfers"
                 if (EXCLUDED_CATEGORIES.includes(category.toLowerCase())) {
                     return; // Skip this transaction
                 }
                 
                 uniqueCategories.add(category);
-                
+
                 let finalCreditCard = creditCard;
                 let myTotal = 0;
                 let status = '';
@@ -1175,11 +1248,12 @@
                     // Try to auto-assign credit card from CSV
                     if (ccCsvIndex !== undefined) {
                         const csvCardValue = values[ccCsvIndex].trim();
-                        finalCreditCard = csvCardValue || 'Archived Data'; 
+                        finalCreditCard = csvCardValue || 'Archived Data';
                     } else {
                         // Fallback if no CC column found, use placeholder
-                        finalCreditCard = 'Archived Data'; 
+                        finalCreditCard = 'Archived Data';
                     }
+
                     // Restore My Total, Status, and Notes if columns exist in the exported file
                     if (myTotalIndex !== undefined) {
                         const myTotalStr = values[myTotalIndex] || '0';
@@ -1191,6 +1265,7 @@
                     if (notesIndex !== undefined) {
                         notes = values[notesIndex].trim();
                     }
+
                 } else if (finalCreditCard === SKIP_CC_SELECTION) {
                     // Fallback for 'old' data import that didn't have a CC column (left for safety, but above logic handles it)
                     finalCreditCard = 'Archived Data';
@@ -1218,14 +1293,8 @@
         if (parsedData.length === 0 && dataLines.length > 0) {
             console.warn(`Warning: Found data rows in "${fileName}" but parsed 0 transactions. Check CSV format.`);
         }
+        
         return parsedData;
-    }
-
-    function formatDate(dateString) {
-        const date = parseDateInput(dateString); // Use parseDateInput to get a valid date
-        if (date === null) return dateString; // Return original string if unparsable
-        const options = { year: 'numeric', month: 'short', day: 'numeric' };
-        return date.toLocaleDateString('en-US', options);
     }
 
     function processTransactions() {
@@ -1242,35 +1311,17 @@
         applyDateFilter();
     }
     
-    // --- Transaction Sorting and Filtering ---
+    // --- Transaction Sorting and Filtering --- 
     function sortTransactions(key) {
         if (transactionSort.key === key) {
             transactionSort.direction = transactionSort.direction === 'asc' ? 'desc' : 'asc';
         } else {
             transactionSort.key = key;
-            transactionSort.direction = key === 'dateObj' ? 'asc' : 'desc'; // Default sort
+            // Default date sort to ASC (oldest first)
+            transactionSort.direction = key === 'dateObj' ? 'asc' : 'desc'; 
         }
 
-        displayedTransactions.sort((a, b) => {
-            const aVal = a[key];
-            const bVal = b[key];
-            let comparison = 0;
-
-            if (key === 'dateObj') {
-                const aTime = aVal ? aVal.getTime() : 0;
-                const bTime = bVal ? bVal.getTime() : 0;
-                comparison = aTime - bTime;
-            } else if (typeof aVal === 'number' && typeof bVal === 'number') {
-                comparison = aVal - bVal;
-            } else {
-                comparison = String(aVal).localeCompare(String(bVal));
-            }
-            
-            return transactionSort.direction === 'asc' ? comparison : -comparison;
-        });
-
-        updateSortIndicators('transactions-list', transactionSort);
-        renderTransactions();
+        reapplyCurrentSort(); // Use the dedicated reapply function to sort and render
     }
 
     function updateSortIndicators(listId, sortState) {
@@ -1308,255 +1359,610 @@
                 endDate = new Date(year, month, 0);
                 endDate.setHours(23, 59, 59, 999);
             }
+            // All Time means null dates
         }
 
         displayedTransactions = transactions.filter(t => {
             const date = t.dateObj;
             // Critical check: only proceed if date is a valid object
             if (!date) return false;
-
             const meetsStart = !startDate || date >= startDate;
             const meetsEnd = !endDate || date <= endDate;
-
             return meetsStart && meetsEnd;
         });
 
-        // Reapply current sort after filtering
-        sortTransactions(transactionSort.key); 
-        // Note: renderTransactions is called inside sortTransactions now
+        // FIX (part 1 of 2): Re-apply the current sort after filtering.
+        reapplyCurrentSort(); 
         calculateTotals();
     }
+    
+    // --- Render Functions ---
+    
+    function getActionButtonsHTML(t, index) {
+        const status = t.status || '';
+        const isNA = status === 'N/A';
+        const isFull = status === 'Full';
+        const isHalf = status === 'Half';
+        const isCustom = status.includes('Split') || status.includes('Custom');
 
-    function calculateTotals() {
-        // FILTER: Exclude transactions with category "My Payments" from totals calculation
-        const filteredTxns = displayedTransactions.filter(t => t.category !== 'My Payments');
+        const naClass = isNA ? 'applied' : '';
+        const fullClass = isFull ? 'applied' : '';
+        const halfClass = isHalf ? 'applied' : '';
+        const customClass = (isCustom && !isHalf) ? 'applied' : '';
+
+        // FIX: Only show Edit / Delete button for Manual Entries
+        let manualEditButtonHTML = '';
+        if (t.fileName === 'Manual Entry') {
+            manualEditButtonHTML = `
+                <div class="action-buttons-grid single-button" style="margin-top: 5px;">
+                     <button class="btn-full action-button" onclick="openEditTransactionModal(${index})" style="background-color: #CDE6F8 !important; border: 2px solid #76AFE5; color: #2473BC !important;">Edit / Delete</button>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="action-buttons-grid">
+                <button class="btn-split-half action-button ${halfClass}" onclick="applySplitHalf(${index})">Half</button>
+                <button class="btn-full action-button ${fullClass}" onclick="applySplitFull(${index})">Full</button>
+                <button class="btn-split-custom action-button ${customClass}" onclick="openCustomSplitModal(${index})">Custom Split</button>
+                <button class="btn-na action-button ${naClass}" onclick="applySplitNA(${index})">N/A</button>
+            </div>
+            ${manualEditButtonHTML}
+        `;
+    }
+
+    function renderTransactions() {
+        const tbody = document.getElementById('transactions-body');
+        tbody.innerHTML = '';
         
-        fullOriginalTotal = filteredTxns.reduce((acc, t) => acc + t.originalAmount, 0);
-        fullMyTotal = filteredTxns.reduce((acc, t) => acc + t.myTotal, 0);
+        if (displayedTransactions.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #666; padding: 20px;">No transactions match the current filter.</td></tr>';
+            updateTotalsDisplay(); 
+            return;
+        }
+
+        displayedTransactions.forEach((t, index) => {
+            const row = tbody.insertRow();
+            row.classList.toggle('na-applied', t.status === 'N/A');
+            
+            row.insertCell().textContent = formatDate(t.date); 
+            row.insertCell().textContent = t.creditCard;
+            row.insertCell().textContent = t.description;
+            
+            // Category Select
+            const categoryCell = row.insertCell();
+            categoryCell.innerHTML = `
+                <select class="category-select" onchange="updateTransactionCategory(${index}, this.value)">
+                    ${Array.from(uniqueCategories).sort().map(cat => 
+                        `<option value="${cat}" ${t.category === cat ? 'selected' : ''}>${cat}</option>`
+                    ).join('')}
+                </select>
+            `;
+
+            row.insertCell().innerHTML = `<span class="${t.originalAmount <= 0 ? 'negative' : 'positive'}">${formatCurrency(t.originalAmount)}</span>`;
+            row.insertCell().innerHTML = `<span class="${t.myTotal <= 0 ? 'negative' : 'positive'}">${formatCurrency(t.myTotal)}</span>`;
+
+            // Action Buttons
+            row.insertCell().innerHTML = getActionButtonsHTML(t, index);
+
+            // Notes Input
+            const notesCell = row.insertCell();
+            notesCell.innerHTML = `<input type="text" class="notes-input" value="${t.notes || ''}" onchange="updateTransactionNotes(${index}, this.value)">`;
+        });
         
         updateTotalsDisplay();
     }
     
-    // --- Category Management Functions ---
+    // --- Transaction Action Handlers ---
+    
+    // Central function to apply the split status change
+    function applyAction(action, index, customValue = null, ways = 2) {
+        const t = displayedTransactions[index];
+        if (!t) return;
 
-    function openManageCategoryModal(categoryName) {
-        if (['N/A', 'Uncategorized'].includes(categoryName)) return;
+        // Apply the logic
+        switch (action) {
+            case 'half':
+                t.status = 'Half';
+                t.myTotal = parseFloat((t.originalAmount / 2).toFixed(2));
+                break;
+            case 'full':
+                t.status = 'Full';
+                t.myTotal = t.originalAmount;
+                break;
+            case 'na':
+                t.status = 'N/A';
+                t.myTotal = 0;
+                break;
+            case 'custom-split':
+                t.status = `Split ${ways} Ways`;
+                t.myTotal = parseFloat((t.originalAmount / ways).toFixed(2));
+                break;
+            case 'custom-portion':
+                t.status = 'Custom Split';
+                t.myTotal = parseFloat(customValue);
+                break;
+        }
 
-        currentManagingCategory = categoryName;
-        document.getElementById('current-category-name-display').textContent = categoryName;
-        document.getElementById('new-category-name').value = categoryName; // Pre-fill the input
-        openModal('manageCategoryModal');
+        // FIX (part 2 of 2): Recalculate totals and re-render using the existing sort state.
+        calculateTotals();
+        reapplyCurrentSort();
+    }
+
+    function applySplitHalf(index) {
+        applyAction('half', index);
+    }
+
+    function applySplitFull(index) {
+        applyAction('full', index);
+    }
+
+    function applySplitNA(index) {
+        applyAction('na', index);
     }
     
+    function updateTransactionNotes(index, value) {
+        const t = displayedTransactions[index];
+        if (t) {
+            t.notes = value;
+            // No need to re-render the whole table, but we do need to update it in the original array
+            // Since the object is passed by reference, it is already updated in the main 'transactions' array.
+        }
+    }
+    
+    function updateTransactionCategory(index, newCategory) {
+        const t = displayedTransactions[index];
+        if (t) {
+            t.category = newCategory;
+            // No full re-render/re-sort needed, but we do need to recalculate totals
+            calculateTotals(); 
+            // Re-render only to update the category in the dropdowns (optional, but good practice)
+            // Or just trust the current element is updated and re-render the breakdown tab only
+            applyBreakdownFilter();
+        }
+    }
+
+    // --- Custom Split Modal Handlers ---
+    
+    function openCustomSplitModal(index) {
+        currentTransactionIndex = index; // Store the index globally
+        const t = displayedTransactions[index];
+        if (!t) return;
+
+        document.getElementById('modal-date').textContent = formatDate(t.date);
+        document.getElementById('modal-description').textContent = t.description;
+        document.getElementById('modal-category').textContent = t.category;
+        document.getElementById('modal-original-amount').textContent = formatCurrency(t.originalAmount);
+        
+        // Reset to defaults
+        document.getElementById('split-ways').value = '2';
+        document.getElementById('split-type').value = 'even';
+        document.getElementById('custom-portion-field').style.display = 'none';
+
+        openModal('customSplitModal');
+    }
+    
+    function validateSplitWays() {
+        let ways = parseInt(document.getElementById('split-ways').value);
+        if (isNaN(ways) || ways < 1) {
+            document.getElementById('split-ways').value = 1;
+        }
+    }
+    
+    function toggleCustomPortionField() {
+        const type = document.getElementById('split-type').value;
+        document.getElementById('custom-portion-field').style.display = type === 'custom' ? 'block' : 'none';
+    }
+
+    function applyCustomSplit() {
+        const originalAmount = displayedTransactions[currentTransactionIndex].originalAmount;
+        const splitType = document.getElementById('split-type').value;
+        const splitWays = parseInt(document.getElementById('split-ways').value);
+        const customPortion = parseFloat(document.getElementById('my-custom-portion').value);
+
+        let myTotal = 0;
+        let newStatus = '';
+
+        if (splitType === 'even') {
+            myTotal = parseFloat((originalAmount / splitWays).toFixed(2));
+            newStatus = `Split ${splitWays} Ways`;
+        } else { // custom
+            if (isNaN(customPortion)) {
+                alert('Please enter a valid custom portion.');
+                return;
+            }
+            myTotal = parseFloat(customPortion.toFixed(2));
+            newStatus = 'Custom Split';
+        }
+        
+        const t = displayedTransactions[currentTransactionIndex];
+        if (t) {
+            t.status = newStatus;
+            t.myTotal = myTotal;
+        }
+        
+        closeModal('customSplitModal');
+
+        // FIX: Recalculate and re-render with preserved sort state.
+        calculateTotals();
+        reapplyCurrentSort(); 
+    }
+    
+    // --- Manual Transaction Handlers (Essential to complete the flow) ---
+    function openManualTransactionModal(index = null) {
+        const modal = document.getElementById('manualTransactionModal');
+        const saveBtn = document.getElementById('manual-save-btn');
+        const isEditing = index !== null;
+        editingTransactionIndex = index;
+        
+        // Reset form
+        modal.dataset.context = isEditing ? 'edit' : 'add';
+        document.querySelector('#manualTransactionModal h2').textContent = isEditing ? 'Edit Transaction' : 'Add Manual Transaction';
+        saveBtn.textContent = isEditing ? 'Save Changes' : 'Save Transaction';
+        
+        // Clear all inputs
+        document.getElementById('manual-date').value = '';
+        document.getElementById('manual-cc').value = 'Manual';
+        document.getElementById('manual-desc').value = '';
+        document.getElementById('manual-original-amount').value = '';
+        document.getElementById('manual-my-total').value = '';
+        document.getElementById('manual-notes').value = '';
+
+        // Reset split buttons
+        document.querySelectorAll('#manual-split-buttons .action-button').forEach(btn => btn.classList.remove('applied'));
+        document.getElementById('manual-my-total').disabled = false;
+
+        reRenderCategoryDropdowns('manual-category');
+
+        if (isEditing) {
+            const t = displayedTransactions[index];
+            if (!t) return;
+            
+            // Format date for input[type="date"] (YYYY-MM-DD)
+            const dateParts = t.date.split('/'); // Assumes MM/DD/YYYY format from CSV
+            const formattedDate = t.dateObj ? t.dateObj.toISOString().split('T')[0] : '';
+            
+            document.getElementById('manual-date').value = formattedDate;
+            document.getElementById('manual-cc').value = t.creditCard;
+            document.getElementById('manual-desc').value = t.description;
+            document.getElementById('manual-category').value = t.category;
+            document.getElementById('manual-original-amount').value = t.originalAmount;
+            document.getElementById('manual-my-total').value = t.myTotal;
+            document.getElementById('manual-notes').value = t.notes;
+            
+            // Set split button status
+            document.querySelectorAll('#manual-split-buttons .action-button').forEach(btn => {
+                if (btn.dataset.action === t.status.toLowerCase().replace(' ', '-').split(' ')[0]) {
+                    btn.classList.add('applied');
+                    if (btn.dataset.action !== 'custom') {
+                         document.getElementById('manual-my-total').disabled = true;
+                    }
+                }
+            });
+            
+            // Add Delete button only in edit mode
+            const actionButtons = document.getElementById('manual-modal-action-buttons');
+            let deleteBtn = document.getElementById('manual-delete-btn');
+            if (!deleteBtn) {
+                deleteBtn = document.createElement('button');
+                deleteBtn.id = 'manual-delete-btn';
+                deleteBtn.textContent = 'Delete Transaction';
+                deleteBtn.className = 'btn-delete';
+                deleteBtn.onclick = () => { deleteTransaction(index); closeModal('manualTransactionModal'); };
+                actionButtons.insertBefore(deleteBtn, saveBtn);
+            }
+        } else {
+            // Remove delete button if it exists and we're in add mode
+            const deleteBtn = document.getElementById('manual-delete-btn');
+            if (deleteBtn) deleteBtn.remove();
+        }
+
+        openModal('manualTransactionModal');
+    }
+
+    function handleManualAmountChange() {
+        const originalAmountInput = document.getElementById('manual-original-amount');
+        const myTotalInput = document.getElementById('manual-my-total');
+        const splitButtons = document.querySelectorAll('#manual-split-buttons .action-button.applied');
+        
+        const originalAmount = parseFloat(originalAmountInput.value) || 0;
+        
+        if (splitButtons.length === 1) {
+            const action = splitButtons[0].dataset.action;
+            let newMyTotal = 0;
+            if (action === 'full') {
+                newMyTotal = originalAmount;
+            } else if (action === 'half') {
+                newMyTotal = originalAmount / 2;
+            } else if (action === 'na') {
+                newMyTotal = 0;
+            }
+            myTotalInput.value = newMyTotal.toFixed(2);
+        }
+    }
+
+    function handleManualSplitAction(action) {
+        document.querySelectorAll('#manual-split-buttons .action-button').forEach(btn => btn.classList.remove('applied'));
+        const targetButton = document.querySelector(`#manual-split-buttons button[data-action="${action}"]`);
+        if (targetButton) {
+            targetButton.classList.add('applied');
+        }
+
+        const myTotalInput = document.getElementById('manual-my-total');
+        myTotalInput.disabled = (action !== 'custom');
+
+        handleManualAmountChange(); // Recalculate myTotal based on new action
+    }
+
+    function openManualCustomSplitModal() {
+        // This is a placeholder as the simple manual modal doesn't support the full custom split options
+        handleManualSplitAction('custom');
+    }
+    
+    function handleManualMyTotalInput() {
+        // If user manually edits myTotal, force the status to 'custom'
+        handleManualSplitAction('custom');
+    }
+    
+    function saveManualTransaction() {
+        const dateInput = document.getElementById('manual-date');
+        const ccInput = document.getElementById('manual-cc');
+        const descInput = document.getElementById('manual-desc');
+        const categoryInput = document.getElementById('manual-category');
+        const originalAmountInput = document.getElementById('manual-original-amount');
+        const myTotalInput = document.getElementById('manual-my-total');
+        const notesInput = document.getElementById('manual-notes');
+        
+        if (!dateInput.value || !originalAmountInput.value) {
+            alert('Date and Original Amount are required.');
+            return;
+        }
+
+        const originalAmount = parseFloat(originalAmountInput.value);
+        const myTotal = parseFloat(myTotalInput.value);
+        const dateObj = parseDateInput(dateInput.value);
+
+        const selectedAction = document.querySelector('#manual-split-buttons .action-button.applied');
+        let status = selectedAction ? selectedAction.dataset.action : '';
+        if (status === 'half') status = 'Half';
+        else if (status === 'full') status = 'Full';
+        else if (status === 'na') status = 'N/A';
+        else if (status === 'custom') status = 'Custom Split';
+        
+        const newTransaction = {
+            date: dateInput.value,
+            dateObj: dateObj,
+            creditCard: ccInput.value,
+            description: descInput.value || 'Manual Entry',
+            category: categoryInput.value || 'Uncategorized',
+            originalAmount: originalAmount,
+            myTotal: myTotal,
+            status: status,
+            fileName: 'Manual Entry',
+            notes: notesInput.value || ''
+        };
+        
+        uniqueCategories.add(newTransaction.category);
+
+        if (editingTransactionIndex !== null) {
+            // Edit existing transaction (update both in full list and displayed list)
+            const oldT = displayedTransactions[editingTransactionIndex];
+            // Find the original index in the full 'transactions' array to ensure persistence
+            const originalIndex = transactions.findIndex(t => t.date === oldT.date && t.description === oldT.description && t.originalAmount === oldT.originalAmount);
+            
+            Object.assign(oldT, newTransaction); // Update displayed
+            if (originalIndex !== -1) {
+                Object.assign(transactions[originalIndex], newTransaction); // Update full list
+            }
+        } else {
+            // Add new transaction
+            transactions.push(newTransaction);
+        }
+        
+        closeModal('manualTransactionModal');
+        
+        // FIX: Recalculate totals and re-render with preserved sort state.
+        reRenderCategoryDropdowns();
+        applyDateFilter(); // This will re-filter, re-sort, and re-render
+    }
+
+    function deleteTransaction(index) {
+        if (!confirm('Are you sure you want to delete this transaction? This action cannot be undone.')) return;
+        
+        const t = displayedTransactions[index];
+        if (!t) return;
+        
+        // Remove from the full list
+        transactions = transactions.filter(item => item !== t);
+        
+        // The display list will be filtered/sorted/rendered next, but we remove the item 
+        // from the displayed list right away to prevent issues if it's the only one.
+        displayedTransactions.splice(index, 1);
+        
+        // Recalculate totals and re-render with preserved sort state.
+        calculateTotals();
+        reapplyCurrentSort(); 
+        
+        closeModal('manualTransactionModal');
+        applyBreakdownFilter();
+    }
+    
+    // --- Category Management Handlers (Essential to complete the flow) ---
+
+    function reRenderCategoryDropdowns(targetId = null) {
+        const categoryList = Array.from(uniqueCategories).sort();
+        
+        const renderOptions = (selectedValue) => {
+            return categoryList.map(cat => 
+                `<option value="${cat}" ${selectedValue === cat ? 'selected' : ''}>${cat}</option>`
+            ).join('');
+        };
+        
+        // Update Manual Entry Modal dropdown
+        if (targetId === 'manual-category') {
+            const select = document.getElementById('manual-category');
+            if (select) {
+                const selectedValue = select.value;
+                select.innerHTML = renderOptions(selectedValue);
+            }
+            return;
+        }
+
+        // Re-render all category selects in the table
+        document.querySelectorAll('.category-select').forEach(select => {
+            const selectedValue = select.value;
+            select.innerHTML = renderOptions(selectedValue);
+        });
+    }
+
     function openNewCategoryModal() {
         document.getElementById('new-category-name-input').value = '';
         openModal('newCategoryModal');
     }
 
     function addNewCategory() {
-        const newName = document.getElementById('new-category-name-input').value.trim();
-
-        if (!newName) {
-            alert("Please enter a valid category name.");
-            return;
+        const newCatName = document.getElementById('new-category-name-input').value.trim();
+        if (newCatName && !uniqueCategories.has(newCatName)) {
+            uniqueCategories.add(newCatName);
+            reRenderCategoryDropdowns();
+            applyBreakdownFilter();
+            closeModal('newCategoryModal');
+        } else if (uniqueCategories.has(newCatName)) {
+            alert('Category already exists.');
+        } else {
+            alert('Please enter a category name.');
         }
-        
-        if (uniqueCategories.has(newName)) {
-            alert(`A category named "${newName}" already exists.`);
-            return;
-        }
-
-        uniqueCategories.add(newName);
-        
-        closeModal('newCategoryModal');
-        
-        // Re-render all dropdowns (manual modal) and transaction list
-        reRenderCategoryDropdowns(); 
-        applyDateFilter(); // Re-render the main transaction list
-
-        alert(`Category "${newName}" successfully added.`);
     }
-
+    
+    function openManageCategoryModal(category) {
+        currentManagingCategory = category;
+        document.getElementById('current-category-name-display').textContent = category;
+        document.getElementById('new-category-name').value = category;
+        openModal('manageCategoryModal');
+    }
+    
     function performRenameCategory() {
-        const oldName = currentManagingCategory;
-        const newName = document.getElementById('new-category-name').value.trim();
-
-        if (!newName || newName === oldName) {
-            alert("Please enter a valid and different name for the category.");
+        const oldCat = currentManagingCategory;
+        const newCat = document.getElementById('new-category-name').value.trim();
+        
+        if (!newCat || newCat === oldCat) {
+            alert('Invalid or unchanged category name.');
             return;
         }
         
-        if (uniqueCategories.has(newName)) {
-            alert(`A category named "${newName}" already exists. Please choose another name.`);
+        if (uniqueCategories.has(newCat)) {
+            alert(`Category "${newCat}" already exists. Cannot rename.`);
             return;
         }
         
-        if (!confirm(`Are you sure you want to rename "${oldName}" to "${newName}"?`)) {
-            return;
-        }
-
-        // 1. Update all transactions
+        // 1. Update transactions
         transactions.forEach(t => {
-            if (t.category === oldName) {
-                t.category = newName;
+            if (t.category === oldCat) {
+                t.category = newCat;
             }
         });
-
-        // 2. Update the uniqueCategories Set
-        uniqueCategories.delete(oldName);
-        uniqueCategories.add(newName);
-
-        // 3. Close modal and re-render
-        closeModal('manageCategoryModal');
         
-        // Re-render everything that depends on categories
+        // 2. Update set
+        uniqueCategories.delete(oldCat);
+        uniqueCategories.add(newCat);
+        
+        // 3. Refresh UI
         reRenderCategoryDropdowns();
-        applyDateFilter(); // Re-render transactions tab (will call renderTransactions)
-        applyBreakdownFilter(); // Re-render breakdown tab (will call renderBreakdown)
-
-        alert(`Category "${oldName}" successfully renamed to "${newName}".`);
+        applyBreakdownFilter(); // Recalculates and re-renders breakdown list
+        renderTransactions(); // Re-renders transaction list with new dropdowns
+        closeModal('manageCategoryModal');
     }
+    
+    function deleteCategory(categoryToDelete) {
+        if (!confirm(`WARNING: Deleting category "${categoryToDelete}" will re-categorize all associated transactions to 'Uncategorized'. Are you sure?`)) return;
 
-    function deleteCategory(categoryName) {
-        if (['N/A', 'Uncategorized'].includes(categoryName)) return;
-        
-        if (!confirm(`Are you sure you want to DELETE the category "${categoryName}"? All ${categoryName} transactions will be moved to "Uncategorized". THIS CANNOT BE UNDONE.`)) {
-            return;
-        }
-        
-        // 1. Update all transactions
+        // 1. Update transactions to 'Uncategorized'
         transactions.forEach(t => {
-            if (t.category === categoryName) {
+            if (t.category === categoryToDelete) {
                 t.category = 'Uncategorized';
             }
         });
 
-        // 2. Remove from the uniqueCategories Set
-        uniqueCategories.delete(categoryName);
+        // Ensure 'Uncategorized' exists after deletion
+        uniqueCategories.add('Uncategorized');
 
-        // 3. Close modal (if open) and re-render
-        closeModal('manageCategoryModal');
+        // 2. Remove from set
+        uniqueCategories.delete(categoryToDelete);
         
-        // Re-render everything that depends on categories
+        // 3. Refresh UI
         reRenderCategoryDropdowns();
-        applyDateFilter(); // Re-render transactions tab
-        applyBreakdownFilter(); // Re-render breakdown tab
-        
-        alert(`Category "${categoryName}" successfully deleted and transactions moved to "Uncategorized".`);
+        applyBreakdownFilter(); 
+        renderTransactions();
+        closeModal('manageCategoryModal');
     }
 
-    // This function populates select elements with class .category-select 
-    // It is primarily used for the Manual Transaction Modal
-    function reRenderCategoryDropdowns() {
-        const selects = document.querySelectorAll('.category-select');
-        selects.forEach(select => {
-            // Store current value to re-select if possible
-            const currentValue = select.value;
-            select.innerHTML = renderCategorySelectOptions(currentValue);
-            
-            // Restore previous value if it still exists
-            if (currentValue && select.querySelector(`option[value="${currentValue}"]`)) {
-                 select.value = currentValue;
-            } else {
-                 select.value = 'Uncategorized'; // Fallback if category was deleted/renamed
-            }
-        });
-    }
-    
-    // NEW HELPER FUNCTION to generate options HTML for a select element
-    function renderCategorySelectOptions(currentCategory) {
-        let optionsHtml = '';
-        // Sort unique categories alphabetically, case-insensitive
-        const sortedCategories = Array.from(uniqueCategories)
-            .sort((a, b) => a.localeCompare(b));
-            
-        // Ensure 'Uncategorized' is at the top/default
-        if (!uniqueCategories.has('Uncategorized')) {
-            sortedCategories.unshift('Uncategorized');
+    // --- Category Breakdown Functions ---
+
+    function applyBreakdownFilter() {
+        const preset = document.getElementById('breakdown-date-range-preset').value;
+        let startDate = null;
+        let endDate = null;
+        const now = new Date();
+        let year = now.getFullYear();
+        let month = now.getMonth();
+
+        if (preset === 'current_month') {
+            startDate = new Date(year, month, 1);
+            endDate = new Date(year, month + 1, 0);
+            endDate.setHours(23, 59, 59, 999);
+        } else if (preset === 'last_month') {
+            startDate = new Date(year, month - 1, 1);
+            endDate = new Date(year, month, 0);
+            endDate.setHours(23, 59, 59, 999);
         }
 
-        sortedCategories.forEach(category => {
-            const selected = category === currentCategory ? 'selected' : '';
-            optionsHtml += `<option value="${category}" ${selected}>${category}</option>`;
+        const filteredTxns = transactions.filter(t => {
+            const date = t.dateObj;
+            if (!date) return false;
+            const meetsStart = !startDate || date >= startDate;
+            const meetsEnd = !endDate || date <= endDate;
+            return meetsStart && meetsEnd;
         });
-        
-        return optionsHtml;
-    }
-    
-    // NEW FUNCTION to handle category change from the main table dropdown
-    function updateTransactionCategory(index, newCategory) {
-        if (index >= 0 && index < transactions.length) {
-            transactions[index].category = newCategory;
-            
-            // Recalculate totals and breakdown
-            calculateTotals(); 
-            applyBreakdownFilter(); 
-        }
-    }
-    // --- End Category Management Functions ---
-    
-    function calculateCategoryBreakdown(filteredTransactions) {
-        if (filteredTransactions.length === 0) {
-            currentBreakdownData = [];
-            renderBreakdown();
-            return;
-        }
 
-        const categoryData = {};
-        let totalTransactions = filteredTransactions.length;
-        let grandOriginalTotal = 0;
-        let grandMyTotal = 0;
+        const breakdown = {};
+        let totalOriginalAmount = 0;
+        let totalMyShare = 0;
 
-        filteredTransactions.forEach(t => {
-            const cat = t.category || 'N/A';
-            if (!categoryData[cat]) {
-                categoryData[cat] = { count: 0, originalTotal: 0, myTotal: 0 };
+        filteredTxns.forEach(t => {
+            const cat = t.category || 'Uncategorized';
+            if (!breakdown[cat]) {
+                breakdown[cat] = {
+                    category: cat,
+                    count: 0,
+                    originalAmount: 0,
+                    myTotal: 0
+                };
             }
-            categoryData[cat].count++;
-            
-            // --- MODIFIED LOGIC: EXCLUDE "My Payments" from totals and grand totals ---
-            if (cat !== 'My Payments') {
-                categoryData[cat].originalTotal += t.originalAmount;
-                categoryData[cat].myTotal += t.myTotal;
-                grandOriginalTotal += t.originalAmount;
-                grandMyTotal += t.myTotal;
-            }
-            // --- END MODIFIED LOGIC ---
+            breakdown[cat].count++;
+            breakdown[cat].originalAmount += t.originalAmount;
+            breakdown[cat].myTotal += t.myTotal;
+
+            totalOriginalAmount += t.originalAmount;
+            totalMyShare += t.myTotal;
         });
 
-        // Prepare data for rendering/sorting
-        const totalOriginalAmount = grandOriginalTotal;
-        currentBreakdownData = Object.keys(categoryData).map(cat => {
-            const data = categoryData[cat];
-            // --- MODIFIED CALCULATION FOR PERCENTAGES BASED ON TOTAL ORIGINAL AMOUNT ---
-            // Percentage is calculated based on the category's originalTotal against the grandOriginalTotal (which excludes My Payments)
-            const percentage = totalOriginalAmount === 0 ? 0 : (data.originalTotal / totalOriginalAmount) * 100;
-            // --------------------------------------------------------------------------
-            return {
-                name: cat,
-                count: data.count,
-                originalTotal: data.originalTotal,
-                myTotal: data.myTotal,
-                percentage: percentage
-            };
-        });
+        // Convert to array and calculate percentages
+        currentBreakdownData = Object.values(breakdown).map(item => ({
+            ...item,
+            percentage: totalOriginalAmount !== 0 ? (item.originalAmount / totalOriginalAmount) * 100 : 0
+        }));
 
-        currentBreakdownData.grandOriginalTotal = grandOriginalTotal;
-        currentBreakdownData.grandMyTotal = grandMyTotal;
-        currentBreakdownData.totalTransactions = totalTransactions;
-
-        // Apply current breakdown sort
+        // Now sort the data before rendering
         sortBreakdown(breakdownSort.key);
+        renderBreakdown(currentBreakdownData.reduce((sum, item) => sum + item.originalAmount, 0), currentBreakdownData.reduce((sum, item) => sum + item.myTotal, 0));
     }
-
+    
     function sortBreakdown(key) {
-        if (currentBreakdownData.length === 0) return;
-
         if (breakdownSort.key === key) {
             breakdownSort.direction = breakdownSort.direction === 'asc' ? 'desc' : 'asc';
         } else {
             breakdownSort.key = key;
-            breakdownSort.direction = (key === 'percentage' || key === 'count' || key === 'originalTotal' || key === 'myTotal') ? 'desc' : 'asc';
+            breakdownSort.direction = key === 'category' ? 'asc' : 'desc'; 
         }
 
         currentBreakdownData.sort((a, b) => {
@@ -1572,591 +1978,69 @@
             
             return breakdownSort.direction === 'asc' ? comparison : -comparison;
         });
-
+        
         updateSortIndicators('category-breakdown-list', breakdownSort);
-        renderBreakdown();
+        renderBreakdown(currentBreakdownData.reduce((sum, item) => sum + item.originalAmount, 0), currentBreakdownData.reduce((sum, item) => sum + item.myTotal, 0));
     }
-
-    function renderBreakdown() {
-        const breakdownBody = document.getElementById('breakdown-body');
-        const breakdownFooter = document.getElementById('breakdown-footer');
-        breakdownBody.innerHTML = '';
-        breakdownFooter.innerHTML = '';
+    
+    function renderBreakdown(totalOriginalAmount, totalMyShare) {
+        const tbody = document.getElementById('breakdown-body');
+        const tfoot = document.getElementById('breakdown-footer');
+        tbody.innerHTML = '';
+        tfoot.innerHTML = '';
 
         if (currentBreakdownData.length === 0) {
-            breakdownBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #666; padding: 20px;">Load transactions and apply filter to see breakdown.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #666; padding: 20px;">No transactions found for the selected range.</td></tr>';
             return;
         }
 
-        let grandOriginalTotal = currentBreakdownData.grandOriginalTotal;
-        let grandMyTotal = currentBreakdownData.grandMyTotal;
-        let totalTransactions = currentBreakdownData.totalTransactions;
-
-        currentBreakdownData.forEach(data => {
-            // Protected categories cannot be deleted or renamed
-            const isProtected = ['N/A', 'Uncategorized'].includes(data.name);
-            // My Payments is also protected for management, but has special display rules
-            const isMyPayments = data.name === 'My Payments';
-
-            const row = breakdownBody.insertRow();
-            row.insertCell().textContent = data.name;
-            row.insertCell().textContent = data.count;
-            
-            // Special display for My Payments: show no percentage
-            if (isMyPayments) {
-                 row.insertCell().textContent = 'N/A';
-            } else {
-                 row.insertCell().textContent = data.percentage.toFixed(2) + '%';
-            }
-            
-            // Special display for My Payments: show $0.00
-            if (isMyPayments) {
-                row.insertCell().textContent = formatCurrency(0);
-                row.insertCell().textContent = formatCurrency(0);
-            } else {
-                row.insertCell().textContent = formatCurrency(data.originalTotal);
-                row.insertCell().textContent = formatCurrency(data.myTotal);
-            }
-
-            // Actions Cell
-            const actionCell = row.insertCell();
-            if (isProtected) {
-                actionCell.textContent = 'Protected';
-                actionCell.style.color = '#989898';
-                actionCell.style.textAlign = 'center';
-            } else {
-                // Escape single quotes for use in JS function calls
-                const safeCatName = data.name.replace(/'/g, "\\'"); 
-                actionCell.innerHTML = `
-                    <button onclick="openManageCategoryModal('${safeCatName}')" 
-                            style="flex: 1; padding: 6px 5px; font-size: 0.85rem; background-color: #2473BC; color: white;">Manage</button>
-                `;
-            }
-        });
-
-        // Add footer (Total Row)
-        const footerRow = breakdownFooter.insertRow();
-        footerRow.style.fontWeight = 'bold';
-        footerRow.style.borderTop = '2px solid #333';
-        
-        footerRow.insertCell().textContent = 'TOTAL (Excl. My Payments)'; // Updated Label
-        footerRow.insertCell().textContent = totalTransactions;
-        footerRow.insertCell().textContent = '100.00%'; // Always 100%
-        footerRow.insertCell().textContent = formatCurrency(grandOriginalTotal);
-        footerRow.insertCell().textContent = formatCurrency(grandMyTotal);
-        footerRow.insertCell().textContent = ''; // Blank cell for Actions
-    }
-    
-    // --- Manual Entry Functions ---
-    function openManualTransactionModal(index = null) {
-        const modal = document.getElementById('manualTransactionModal');
-        const isEditing = index !== null;
-        editingTransactionIndex = index;
-        
-        reRenderCategoryDropdowns(); 
-
-        document.getElementById('manual-original-amount').disabled = false;
-        document.getElementById('manual-my-total').disabled = false;
-        
-        // Get the Save/Delete/Cancel button container
-        const actionButtonsContainer = document.getElementById('manual-modal-action-buttons');
-        
-        // Remove the previous Delete button if it exists
-        const existingDeleteButton = document.getElementById('manual-delete-btn');
-        if (existingDeleteButton) {
-            existingDeleteButton.remove();
-        }
-
-        if (isEditing) {
-            modal.querySelector('h2').textContent = 'Edit Transaction';
-            modal.dataset.context = 'edit';
-            const t = transactions[index];
-            document.getElementById('manual-date').value = t.date;
-            document.getElementById('manual-cc').value = t.creditCard;
-            document.getElementById('manual-desc').value = t.description;
-            document.getElementById('manual-category').value = t.category || '';
-            document.getElementById('manual-original-amount').value = t.originalAmount;
-            document.getElementById('manual-my-total').value = t.myTotal;
-            document.getElementById('manual-notes').value = t.notes;
-
-            // Update split buttons to reflect current status
-            document.querySelectorAll('#manual-split-buttons button').forEach(btn => {
-                btn.classList.remove('applied');
-            });
-            
-            // --- UPDATED LOGIC TO FIX 'Split Half' STATUS ISSUE WHEN EDITING ---
-            if (t.status === 'Half' || t.status === 'Split Half') {
-                modal.querySelector('[data-action="half"]').classList.add('applied');
-            } else if (t.status === 'Full') {
-                modal.querySelector('[data-action="full"]').classList.add('applied');
-            } else if (t.status === 'Custom Split') {
-                modal.querySelector('[data-action="custom"]').classList.add('applied');
-            } else if (t.status === 'N/A') {
-                modal.querySelector('[data-action="na"]').classList.add('applied');
-            }
-            // --- END UPDATED LOGIC ---
-
-            // Handle My Total display and locking for editing
-            if (t.status === 'Full') {
-                 document.getElementById('manual-my-total').value = t.originalAmount;
-                 document.getElementById('manual-my-total').disabled = true;
-            } else if (t.status === 'Half' || t.status === 'Split Half') {
-                 document.getElementById('manual-my-total').value = (t.originalAmount / 2).toFixed(2);
-                 document.getElementById('manual-my-total').disabled = true;
-            } else if (t.status === 'N/A') {
-                 document.getElementById('manual-my-total').value = 0;
-                 document.getElementById('manual-my-total').disabled = true;
-            } else { // Custom Split or other
-                 document.getElementById('manual-my-total').disabled = false;
-            }
-            
-            // Add Delete button for existing transactions
-            const deleteButton = document.createElement('button');
-            deleteButton.id = 'manual-delete-btn';
-            deleteButton.classList.add('btn-delete');
-            deleteButton.textContent = 'Delete Transaction';
-            deleteButton.onclick = () => {
-                 // Pass the original index to the delete function
-                 deleteTransaction(index); 
-                 closeModal('manualTransactionModal'); 
-            };
-            
-            // Insert the delete button *before* the Cancel button
-            const cancelButton = actionButtonsContainer.querySelector('.btn-na');
-            actionButtonsContainer.insertBefore(deleteButton, cancelButton);
-
-
-        } else {
-            modal.querySelector('h2').textContent = 'Add Manual Transaction';
-            modal.dataset.context = 'add';
-            document.getElementById('manual-date').valueAsDate = new Date();
-            document.getElementById('manual-cc').value = CREDIT_CARD_OPTIONS[CREDIT_CARD_OPTIONS.length - 1]; // Default to 'Manual'
-            document.getElementById('manual-desc').value = '';
-            document.getElementById('manual-category').value = '';
-            document.getElementById('manual-original-amount').value = '';
-            document.getElementById('manual-my-total').value = '';
-            document.getElementById('manual-notes').value = '';
-            
-            // Reset split buttons to default state
-            document.querySelectorAll('#manual-split-buttons button').forEach(btn => {
-                btn.classList.remove('applied');
-            });
-            // Default to no split status applied for new entry
-        }
-        
-        openModal('manualTransactionModal');
-    }
-    
-    // --- Other Transaction Functions ---
-    function renderTransactions() {
-        const tbody = document.getElementById('transactions-body');
-        tbody.innerHTML = ''; 
-
-        if (displayedTransactions.length === 0) {
-             tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #666; padding: 20px;">No transactions match the current filter.</td></tr>';
-            return;
-        }
-
-        displayedTransactions.forEach((t, index) => {
-            // Find the original index to allow editing/deleting from the 'transactions' array
-            const originalIndex = transactions.indexOf(t);
-            
+        currentBreakdownData.forEach(item => {
             const row = tbody.insertRow();
-            row.dataset.originalIndex = originalIndex;
-
-            // Date
-            row.insertCell().textContent = formatDate(t.date);
-
-            // CC, Description
-            row.insertCell().textContent = t.creditCard;
-            row.insertCell().textContent = t.description;
             
-            // Category (NOW EDITABLE DROPDOWN)
-            const categoryCell = row.insertCell();
-            categoryCell.innerHTML = `<select class="category-select" style="width: 100%;" onchange="updateTransactionCategory(${originalIndex}, this.value)">
-                ${renderCategorySelectOptions(t.category)}
-            </select>`;
+            row.insertCell().textContent = item.category;
+            row.insertCell().textContent = item.count;
+            row.insertCell().textContent = `${item.percentage.toFixed(2)}%`;
+            row.insertCell().textContent = formatCurrency(item.originalAmount);
+            row.insertCell().textContent = formatCurrency(item.myTotal);
 
-            // Amounts
-            const originalCell = row.insertCell();
-            originalCell.textContent = formatCurrency(t.originalAmount);
-            originalCell.style.color = t.originalAmount < 0 ? 'black' : 'green'; 
-
-            const myTotalCell = row.insertCell();
-            myTotalCell.textContent = formatCurrency(t.myTotal);
-            myTotalCell.style.color = t.myTotal < 0 ? 'black' : 'green'; 
-            
-            // Actions
             const actionCell = row.insertCell();
-            actionCell.classList.add('actions');
-
-            if (t.fileName === 'Manual Entry') {
-                // Manual entries: ONLY show View/Edit button (as requested)
-                actionCell.innerHTML = `
-                    <div class="action-buttons-grid single-button">
-                        <button class="btn-full" style="background-color: #2473BC !important;"
-                                onclick="openManualTransactionModal(${originalIndex})">View/Edit</button>
-                    </div>
-                `;
-            } else {
-                // Imported transactions: Show split buttons (as usual)
-                // The order: Half, Full (top row) -> Custom, N/A (bottom row) is achieved by the CSS grid-template-columns: 1fr 1fr;
-                actionCell.innerHTML = `
-                    <div class="action-buttons-grid">
-                        <button class="btn-split-half action-button ${t.status === 'Half' || t.status === 'Split Half' ? 'applied' : ''}" 
-                                onclick="applySplitAction(${originalIndex}, 'half')">Half</button>
-                        <button class="btn-full action-button ${t.status === 'Full' ? 'applied' : ''}"
-                                onclick="applySplitAction(${originalIndex}, 'full')">Full</button>
-                        <button class="btn-split-custom action-button ${t.status === 'Custom Split' ? 'applied' : ''}"
-                                onclick="openCustomSplitModal(${originalIndex})">Custom</button>
-                        <button class="btn-na action-button ${t.status === 'N/A' ? 'applied' : ''}"
-                                onclick="applySplitAction(${originalIndex}, 'na')">N/A</button>
-                    </div>
-                `;
-            }
-            
-            // Notes
-            const notesCell = row.insertCell();
-            // Display notes as a read-only field (no onchange listener needed here)
-            notesCell.innerHTML = `<input type="text" class="notes-input" value="${t.notes.replace(/"/g, '&quot;')}" readonly>`;
-
-
-            // Apply gray-out style if N/A
-            if (t.status === 'N/A') {
-                row.classList.add('na-applied');
-            }
+            actionCell.innerHTML = `
+                <button class="btn-full action-button" onclick="openManageCategoryModal('${item.category}')" style="padding: 6px 5px; font-size: 0.8rem;">Manage</button>
+            `;
         });
-    }
-
-    function applySplitAction(index, action) {
-        if (index < 0 || index >= transactions.length) return;
-
-        const t = transactions[index];
-        const originalAmount = t.originalAmount;
-        let newMyTotal = 0;
-        let newStatus = '';
-
-        if (action === 'half') {
-            newMyTotal = originalAmount / 2;
-            newStatus = 'Half';
-        } else if (action === 'full') {
-            newMyTotal = originalAmount;
-            newStatus = 'Full';
-        } else if (action === 'na') {
-            newMyTotal = 0;
-            newStatus = 'N/A';
-        } else {
-            return; // Should not happen
-        }
-
-        t.myTotal = newMyTotal;
-        t.status = newStatus;
-
-        applyDateFilter(); // Re-render transactions and recalculate totals
-        applyBreakdownFilter(); // Update breakdown
-    }
-    
-    function openModal(id) {
-        document.getElementById(id).style.display = 'block';
-    }
-
-    function closeModal(id) {
-        document.getElementById(id).style.display = 'none';
-    }
-    
-    function handleManualSplitAction(action) {
-        const originalAmountInput = document.getElementById('manual-original-amount');
-        const myTotalInput = document.getElementById('manual-my-total');
-        const originalAmount = parseFloat(originalAmountInput.value) || 0;
         
-        // Remove 'applied' class from all buttons
-        document.querySelectorAll('#manual-split-buttons button').forEach(btn => btn.classList.remove('applied'));
-        
-        // Apply logic based on action
-        if (action === 'half') {
-            myTotalInput.value = (originalAmount / 2).toFixed(2);
-            myTotalInput.disabled = true;
-            document.querySelector('[data-action="half"]').classList.add('applied');
-        } else if (action === 'full') {
-            myTotalInput.value = originalAmount.toFixed(2);
-            myTotalInput.disabled = true;
-            document.querySelector('[data-action="full"]').classList.add('applied');
-        } else if (action === 'na') {
-            myTotalInput.value = (0).toFixed(2);
-            myTotalInput.disabled = true;
-            document.querySelector('[data-action="na"]').classList.add('applied');
-        } else if (action === 'custom') {
-            myTotalInput.disabled = false;
-            document.querySelector('[data-action="custom"]').classList.add('applied');
-            // Do not auto-set myTotal for custom split, rely on user input
-        }
-    }
-    
-    function handleManualAmountChange() {
-        const appliedBtn = document.querySelector('#manual-split-buttons button.applied');
-        if (appliedBtn) {
-            handleManualSplitAction(appliedBtn.dataset.action);
-        }
+        // Render Footer Totals
+        const footerRow = tfoot.insertRow();
+        footerRow.innerHTML = `
+            <td colspan="3" style="text-align: right; font-weight: bold; background-color: #f8fbfe;">GRAND TOTAL:</td>
+            <td style="font-weight: bold; background-color: #f8fbfe;">${formatCurrency(totalOriginalAmount)}</td>
+            <td style="font-weight: bold; background-color: #f8fbfe;">${formatCurrency(totalMyShare)}</td>
+            <td style="background-color: #f8fbfe;"></td>
+        `;
     }
 
-    function handleManualMyTotalInput() {
-        // If the user manually edits My Total, switch the status to 'Custom Split'
-        const customBtn = document.querySelector('[data-action="custom"]');
-        if (!customBtn.classList.contains('applied')) {
-             document.querySelectorAll('#manual-split-buttons button').forEach(btn => btn.classList.remove('applied'));
-             customBtn.classList.add('applied');
-             document.getElementById('manual-my-total').disabled = false;
-        }
-    }
-    
-    function openManualCustomSplitModal() {
-        // This button acts as a pre-selection for the Custom Split status
-        handleManualSplitAction('custom');
-    }
-
-    function saveManualTransaction() {
-        const date = document.getElementById('manual-date').value;
-        const creditCard = document.getElementById('manual-cc').value;
-        const description = document.getElementById('manual-desc').value.trim();
-        const category = document.getElementById('manual-category').value.trim();
-        const originalAmountStr = document.getElementById('manual-original-amount').value;
-        const myTotalStr = document.getElementById('manual-my-total').value;
-        const notes = document.getElementById('manual-notes').value.trim();
-
-        if (!date || !originalAmountStr) {
-            alert('Date and Original Amount are required.');
-            return;
-        }
-
-        const originalAmount = parseFloat(originalAmountStr);
-        let myTotal = parseFloat(myTotalStr);
-        
-        if (isNaN(originalAmount)) {
-            alert('Please enter a valid number for Original Amount.');
-            return;
-        }
-        
-        if (isNaN(myTotal)) {
-             // If My Total is blank but Original Amount exists, default to 0 for my total for now
-             myTotal = 0;
-        }
-
-        const appliedBtn = document.querySelector('#manual-split-buttons button.applied');
-        let status = appliedBtn ? appliedBtn.dataset.action : 'Full'; // Default to Full if nothing selected
-        
-        if (status === 'custom') {
-            status = 'Custom Split';
-        }
-        
-        // Final sanity check on values based on selected status
-        if (status === 'Full') {
-             myTotal = originalAmount;
-        } else if (status === 'half') {
-             myTotal = originalAmount / 2;
-             status = 'Half';
-        } else if (status === 'na') {
-             myTotal = 0;
-             status = 'N/A';
-        }
-
-        const newTransaction = {
-            date: date,
-            dateObj: parseDateInput(date),
-            description: description,
-            category: category || 'Uncategorized',
-            creditCard: creditCard,
-            originalAmount: originalAmount,
-            myTotal: myTotal,
-            status: status,
-            fileName: 'Manual Entry',
-            notes: notes
+    // --- Export Function ---
+    function exportToCSV() {
+        const clean = (str) => {
+            if (str === null || str === undefined) return '';
+            // Escape double quotes by doubling them, then wrap in double quotes
+            return `"${String(str).replace(/"/g, '""')}"`; 
         };
 
-        if (document.getElementById('manualTransactionModal').dataset.context === 'edit') {
-            // Edit existing transaction
-            if (editingTransactionIndex !== null) {
-                transactions[editingTransactionIndex] = newTransaction;
-                
-                // If it was a manual entry, ensure the unique category list is updated
-                uniqueCategories.clear();
-                transactions.forEach(t => {
-                    if (t.category) uniqueCategories.add(t.category);
-                });
-            }
-        } else {
-            // Add new transaction
-            transactions.push(newTransaction);
-            uniqueCategories.add(newTransaction.category);
-        }
-
-        closeModal('manualTransactionModal');
-        reRenderCategoryDropdowns();
-        applyDateFilter(); // Re-render and recalculate
-    }
-    
-    function deleteTransaction(index) {
-        if (!confirm('Are you sure you want to delete this transaction?')) return;
-        
-        if (index >= 0 && index < transactions.length) {
-            const deletedTxn = transactions.splice(index, 1)[0];
-            
-            // Re-evaluate unique categories
-            uniqueCategories.clear();
-            transactions.forEach(t => {
-                if (t.category) uniqueCategories.add(t.category);
-            });
-            
-            reRenderCategoryDropdowns();
-            applyDateFilter(); // Re-render and recalculate
-            applyBreakdownFilter(); // Update breakdown
-        }
-    }
-    
-    // --- Other Modal Functions ---
-    let transactionIndexToSplit = null; 
-
-    function openCustomSplitModal(index) {
-        transactionIndexToSplit = index;
-        const t = transactions[index];
-
-        document.getElementById('modal-date').textContent = formatDate(t.date);
-        document.getElementById('modal-description').textContent = t.description;
-        document.getElementById('modal-category').textContent = t.category;
-        document.getElementById('modal-original-amount').textContent = formatCurrency(t.originalAmount);
-        
-        // Reset to default 2-way even split
-        document.getElementById('split-ways').value = 2;
-        document.getElementById('split-type').value = 'even';
-        document.getElementById('custom-portion-field').style.display = 'none';
-        
-        openModal('customSplitModal');
-    }
-
-    function toggleCustomPortionField() {
-        const splitType = document.getElementById('split-type').value;
-        const customPortionField = document.getElementById('custom-portion-field');
-        if (splitType === 'custom') {
-            customPortionField.style.display = 'block';
-            document.getElementById('my-custom-portion').value = ''; // Clear custom input
-        } else {
-            customPortionField.style.display = 'none';
-        }
-    }
-
-    function applyCustomSplit() {
-        if (transactionIndexToSplit === null) return;
-
-        const splitType = document.getElementById('split-type').value;
-        const t = transactions[transactionIndexToSplit];
-        const originalAmount = t.originalAmount;
-        let newMyTotal = 0;
-
-        if (splitType === 'even') {
-            const splitWays = parseInt(document.getElementById('split-ways').value);
-            if (isNaN(splitWays) || splitWays <= 0) {
-                alert('Please enter a valid number of ways to split.');
-                return;
-            }
-            newMyTotal = originalAmount / splitWays;
-
-        } else if (splitType === 'custom') {
-            const customPortion = parseFloat(document.getElementById('my-custom-portion').value);
-            if (isNaN(customPortion)) {
-                alert('Please enter a valid custom portion for your total.');
-                return;
-            }
-            // Ensure portion is not more than the original amount (and handles negative charges correctly)
-            if (Math.abs(customPortion) > Math.abs(originalAmount) && originalAmount !== 0) {
-                 if (!confirm(`Your custom portion (${formatCurrency(customPortion)}) is greater than the original amount (${formatCurrency(originalAmount)}). Do you want to continue?`)) {
-                    return;
-                }
-            }
-            newMyTotal = customPortion;
-        }
-        
-        t.myTotal = newMyTotal;
-        t.status = 'Custom Split'; // Mark as custom split
-
-        closeModal('customSplitModal');
-        applyDateFilter(); // Re-render transactions and recalculate totals
-        applyBreakdownFilter(); // Update breakdown
-    }
-    
-    function validateSplitWays() {
-        const input = document.getElementById('split-ways');
-        const value = parseInt(input.value);
-        if (isNaN(value) || value < 1) {
-            input.value = 1; 
-        }
-        // If split type is even, trigger a mock apply to update modal view
-        if (document.getElementById('split-type').value === 'even') {
-            // No need to recalculate here, just ensuring positive integer
-        }
-    }
-
-    // --- CATEGORY BREAKDOWN FILTER FIX ---
-    function applyBreakdownFilter() {
-        const preset = document.getElementById('breakdown-date-range-preset').value;
-        let startDate = null;
-        let endDate = null;
-
-        if (preset === 'current_month') {
-            const now = new Date();
-            let year = now.getFullYear();
-            let month = now.getMonth();
-            startDate = new Date(year, month, 1);
-            endDate = new Date(year, month + 1, 0);
-            endDate.setHours(23, 59, 59, 999);
-        } else if (preset === 'last_month') {
-            const now = new Date();
-            let year = now.getFullYear();
-            let month = now.getMonth();
-            startDate = new Date(year, month - 1, 1);
-            endDate = new Date(year, month, 0);
-            endDate.setHours(23, 59, 59, 999);
-        }
-        
-        // --- MODIFIED FILTER LOGIC TO INCLUDE ALL TRANSACTIONS ON 'ALL TIME' ---
-        const filteredTxns = transactions.filter(t => {
-            const date = t.dateObj;
-            
-            // Check if we are on 'All Time' filter (startDate and endDate are null)
-            const isAllTime = !startDate && !endDate;
-
-            // FIX: If date is invalid, include transaction only if we are in 'All Time' view.
-            if (!date) {
-                return isAllTime;
-            }
-
-            // Apply date filtering as normal
-            const meetsStart = !startDate || date >= startDate;
-            const meetsEnd = !endDate || date <= endDate;
-
-            return meetsStart && meetsEnd;
-        });
-        // --- END MODIFIED FILTER LOGIC ---
-
-
-        calculateCategoryBreakdown(filteredTxns);
-    }
-    // --- END CATEGORY BREAKDOWN FILTER FIX ---
-
-    function exportToCSV() {
         const today = new Date();
-        const todayStr = today.toISOString().split('T')[0];
-        
-        // Define CSV headers
-        const csvRows = [
-            ['Date', 'Credit Card', 'Description', 'Category', 'Original Amount', 'My Total', 'Split Status', 'Source File', 'Notes'].join(',')
+        const todayStr = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, '0')}-${today.getDate().toString().padStart(2, '0')}`;
+
+        const csvRows = [];
+        const headers = [
+            'Date', 'Credit Card', 'Description', 'Category', 'Original Amount', 
+            'My Total', 'Split Status', 'File Name', 'Notes'
         ];
+        csvRows.push(headers.map(h => clean(h)).join(','));
 
+        // Use the full transaction list for export, not the filtered one
         transactions.forEach(t => {
-            const clean = (text) => `"${String(text).replace(/"/g, '""')}"`;
-
             const row = [
-                // Use t.date (the raw string) instead of formatDate(t.date) 
-                // to ensure re-imported dates are parsed correctly.
-                clean(t.date), 
+                clean(t.date),
                 clean(t.creditCard),
                 clean(t.description),
                 clean(t.category),
@@ -2188,8 +2072,6 @@
     }
     
     // Initial call to set filters and render if data exists (for persistence)
-    // Note: If persistence logic was added, it would be called here.
-    // For this one-file app, we rely on the user re-importing on load.
     document.addEventListener('DOMContentLoaded', () => {
          applyDateFilter(); 
          applyBreakdownFilter(); 

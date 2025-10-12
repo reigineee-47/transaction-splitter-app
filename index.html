@@ -1387,15 +1387,30 @@
     
     function getActionButtonsHTML(t, index) {
         const status = t.status || '';
+        
+        // Use strict equality checks for primary statuses
         const isNA = status === 'N/A';
         const isFull = status === 'Full';
         const isHalf = status === 'Half';
-        const isCustom = status.includes('Split') || status.includes('Custom');
-
+        
+        // Custom split includes 'Custom Split' AND any status that is NOT Half or Full,
+        // but has a myTotal that is not 0 and not equal to originalAmount/2 or originalAmount.
+        // For simplicity and to match the buttons, we only check for the explicit status string
+        // or a custom split that might have been imported with a more complex string.
+        const isCustom = status === 'Custom Split' || status.includes('Split') && !isHalf && !isFull && !isNA;
+        
         const naClass = isNA ? 'applied' : '';
         const fullClass = isFull ? 'applied' : '';
         const halfClass = isHalf ? 'applied' : '';
-        const customClass = (isCustom && !isHalf) ? 'applied' : '';
+        // Only apply customClass if status is explicitly 'Custom Split' or it has 'Split' but is none of the others
+        // The original logic was: const customClass = (isCustom && !isHalf) ? 'applied' : '';
+        // If the imported status is just 'Half', isHalf is true, isCustom is false (because 'Half' does not contain 'Split' or 'Custom').
+        // The reported bug suggests that when status is 'Half', `isCustom` is being set to true *somehow*. 
+        // We'll update to be explicit that isCustom is only for 'Custom Split' or if it looks like a complex split string.
+
+        // A stricter check for custom status:
+        const isExplicitCustom = status === 'Custom Split' || (status.includes('Split') && !isHalf && !isFull);
+        const customClass = isExplicitCustom ? 'applied' : '';
 
         // FIX: Only show Edit / Delete button for Manual Entries
         let manualEditButtonHTML = '';

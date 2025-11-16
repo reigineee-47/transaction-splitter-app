@@ -290,8 +290,8 @@
         /* --- Buttons and Modals --- */
         .action-buttons-grid, .import-actions-grid {
             display: grid;
-            /* MODIFIED: Change to 2 columns for a 2x2 layout */
-            grid-template-columns: 1fr 1fr; 
+            /* MODIFIED: Change to 3 columns for 4 split buttons + 1 edit + 1 delete = 6 items per row */
+            grid-template-columns: 1fr 1fr 1fr; 
             gap: 5px;
             width: 100%;
         }
@@ -336,7 +336,7 @@
             background-color: #79AFDE; 
             color: white; 
         } 
-        .btn-na, .btn-delete { 
+        .btn-na { 
             background-color: #989898; 
             color: white;
         }
@@ -353,6 +353,13 @@
         .btn-na.action-button { 
             border-color: #989898; 
             color: #989898 !important;
+        }
+        
+        /* Button for editing manual entries */
+        .btn-edit-manual {
+            background-color: #CDE6F8 !important; 
+            border: 2px solid #76AFE5; 
+            color: #2473BC !important;
         }
 
         /* Action Applied State (Turns into a solid-filled button) */
@@ -452,7 +459,7 @@
         }
         #manualTransactionModal .modal-buttons button {
             flex: 1;
-	margin-top: 20px;
+	        margin-top: 20px;
         }
         
         /* Ensure split buttons in modal don't stretch vertically */
@@ -533,7 +540,7 @@
                 </div>
             </div>
             <div id="category-controls">
-                <button id="add-transaction-btn" onclick="openManualTransactionModal()">Add Manual Transaction</button>
+                <button id="add-transaction-btn" onclick="openEditTransactionModal()">Add Manual Transaction</button>
                 <button id="add-category-btn" onclick="openNewCategoryModal()">Add Category</button>
             </div>
         </div>
@@ -1341,62 +1348,60 @@
     }
 
     function applyDateFilter() {
-    const preset = document.getElementById('date-range-preset').value;
-    const customRangeDiv = document.getElementById('custom-date-range');
-    let startDate = null;
-    let endDate = null;
+        const preset = document.getElementById('date-range-preset').value;
+        const customRangeDiv = document.getElementById('custom-date-range');
+        let startDate = null;
+        let endDate = null;
 
-    if (preset === 'custom') {
-        customRangeDiv.style.display = 'flex'; // Use flex now that it's a div containing labels/inputs
-        startDate = document.getElementById('start-date').value ? parseDateInput(document.getElementById('start-date').value) : null;
-        endDate = document.getElementById('end-date').value ? parseDateInput(document.getElementById('end-date').value) : null;
-        // Add one day to the end date to make it inclusive until the end of that day
-        if (endDate) {
-            endDate.setDate(endDate.getDate() + 1);
-            endDate.setSeconds(endDate.getSeconds() - 1); // Set to 23:59:59
-        }
-    } else {
-        customRangeDiv.style.display = 'none';
-
-        const now = new Date();
-        let start = new Date(now.getFullYear(), now.getMonth(), 1);
-        let end = new Date(now.getFullYear(), now.getMonth() + 1, 0); // Last day of month
-
-        if (preset === 'last_month') {
-            start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-            end = new Date(now.getFullYear(), now.getMonth(), 0); // Last day of last month
-        } else if (preset === 'all_time') {
-            // FIX: For 'all_time', we explicitly set startDate and endDate to null 
-            // and then continue with the filtering, which will pass all dates.
-            // No further date manipulation is needed.
-            startDate = null; 
-            endDate = null;
-        }
-
-        // Only set the dates if the preset is NOT 'all_time'
-        if (preset !== 'all_time') { 
-            startDate = start;
+        if (preset === 'custom') {
+            customRangeDiv.style.display = 'flex'; // Use flex now that it's a div containing labels/inputs
+            startDate = document.getElementById('start-date').value ? parseDateInput(document.getElementById('start-date').value) : null;
+            endDate = document.getElementById('end-date').value ? parseDateInput(document.getElementById('end-date').value) : null;
             // Add one day to the end date to make it inclusive until the end of that day
-            endDate = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1);
-            endDate.setSeconds(endDate.getSeconds() - 1); // Set to 23:59:59
+            if (endDate) {
+                endDate.setDate(endDate.getDate() + 1);
+                endDate.setSeconds(endDate.getSeconds() - 1); // Set to 23:59:59
+            }
+        } else {
+            customRangeDiv.style.display = 'none';
+
+            const now = new Date();
+            let start = new Date(now.getFullYear(), now.getMonth(), 1);
+            let end = new Date(now.getFullYear(), now.getMonth() + 1, 0); // Last day of month
+
+            if (preset === 'last_month') {
+                start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                end = new Date(now.getFullYear(), now.getMonth(), 0); // Last day of last month
+            } else if (preset === 'all_time') {
+                // FIX: For 'all_time', we explicitly set startDate and endDate to null 
+                // and then continue with the filtering, which will pass all dates.
+                // No further date manipulation is needed.
+                startDate = null; 
+                endDate = null;
+            }
+
+            // Only set the dates if the preset is NOT 'all_time'
+            if (preset !== 'all_time') { 
+                startDate = start;
+                // Add one day to the end date to make it inclusive until the end of that day
+                endDate = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1);
+                endDate.setSeconds(endDate.getSeconds() - 1); // Set to 23:59:59
+            }
         }
+
+        displayedTransactions = transactions.filter(t => {
+            const date = t.dateObj;
+            if (!date) return false; // Filter out transactions with invalid dates
+            
+            const meetsStart = !startDate || date >= startDate;
+            const meetsEnd = !endDate || date <= endDate;
+            
+            return meetsStart && meetsEnd;
+        });
+        
+        reapplyCurrentSort();
+        calculateTotals();
     }
-    
-    // --- Filtering Logic ---
-    displayedTransactions = transactions.filter(t => {
-        const date = t.dateObj;
-        if (!date) return false; // Filter out transactions with invalid dates
-        
-        // When startDate and endDate are null (for 'All Time'), meetsStart/End are always true
-        const meetsStart = !startDate || date >= startDate;
-        const meetsEnd = !endDate || date <= endDate;
-        
-        return meetsStart && meetsEnd;
-    });
-    
-    reapplyCurrentSort();
-    calculateTotals();
-}
 
     // --- Render Functions ---
     function getActionButtonsHTML(t, index) {
@@ -1411,24 +1416,19 @@
         const halfClass = isHalf ? 'applied' : '';
         const customClass = (isCustom && !isHalf) ? 'applied' : '';
 
-        // FIX: Only show Edit / Delete button for Manual Entries
-        let manualEditButtonHTML = '';
-        if (t.fileName === 'Manual Entry') {
-            manualEditButtonHTML = `
-                <div class="action-buttons-grid single-button" style="margin-top: 5px;">
-                    <button class="btn-full action-button" onclick="openEditTransactionModal(${index})" style="background-color: #CDE6F8 !important; border: 2px solid #76AFE5; color: #2473BC !important;">Edit / Delete</button>
-                </div>
-            `;
-        }
-        
+        // The Edit button is ONLY for manual entries
+        const manualEditButtonHTML = (t.fileName === 'Manual Entry') ? 
+            `<button class="btn-edit-manual action-button" onclick="openEditTransactionModal(${index})">Edit</button>` : '';
+
         return `
             <div class="action-buttons-grid">
                 <button class="btn-split-half action-button ${halfClass}" onclick="applySplitHalf(${index})">Half</button>
                 <button class="btn-full action-button ${fullClass}" onclick="applySplitFull(${index})">Full</button>
-                <button class="btn-split-custom action-button ${customClass}" onclick="openCustomSplitModal(${index})">Custom Split</button>
+                <button class="btn-split-custom action-button ${customClass}" onclick="openCustomSplitModal(${index})">Custom</button>
                 <button class="btn-na action-button ${naClass}" onclick="applySplitNA(${index})">N/A</button>
+                ${manualEditButtonHTML}
+                <button class="btn-delete" onclick="deleteTransaction(${index})">Delete</button>
             </div>
-            ${manualEditButtonHTML}
         `;
     }
     
@@ -1504,7 +1504,7 @@
         if (!t) return;
         
         // Find the corresponding transaction in the full list
-        const originalTIndex = transactions.findIndex(origT => origT.date === t.date && origT.description === t.description && origT.originalAmount === t.originalAmount);
+        const originalTIndex = transactions.findIndex(origT => origT.date === t.date && origT.description === t.description && origT.originalAmount === t.originalAmount && origT.fileName === t.fileName);
         const targetT = originalTIndex !== -1 ? transactions[originalTIndex] : t;
         
         // Logic to update the transaction object
@@ -1555,20 +1555,28 @@
     function updateTransactionNotes(index, value) {
         const t = displayedTransactions[index];
         if (t) {
-            t.notes = value;
-            // No need to re-render the whole table, but we do need to update it in the original array
-            // Since the object is passed by reference, it is already updated in the main 'transactions' array.
+            // Find the original transaction in the full list to ensure persistence
+            const originalTIndex = transactions.findIndex(origT => origT.date === t.date && origT.description === t.description && origT.originalAmount === t.originalAmount && origT.fileName === t.fileName);
+            const targetT = originalTIndex !== -1 ? transactions[originalTIndex] : t;
+            
+            targetT.notes = value;
+            t.notes = value; // Also update the displayed one
         }
     }
 
     function updateTransactionCategory(index, newCategory) {
         const t = displayedTransactions[index];
         if (t) {
-            t.category = newCategory;
+            // Find the original transaction in the full list to ensure persistence
+            const originalTIndex = transactions.findIndex(origT => origT.date === t.date && origT.description === t.description && origT.originalAmount === t.originalAmount && origT.fileName === t.fileName);
+            const targetT = originalTIndex !== -1 ? transactions[originalTIndex] : t;
+            
+            targetT.category = newCategory;
+            t.category = newCategory; // Also update the displayed one
+
             // No full re-render/re-sort needed, but we do need to recalculate totals
             calculateTotals();
-            // Re-render only to update the category in the dropdowns (optional, but good practice)
-            // Or just trust the current element is updated and re-render the breakdown tab only
+            // Re-render only to update the category in the breakdown tab
             applyBreakdownFilter();
         }
     }
@@ -1689,7 +1697,11 @@
                 deleteBtn.id = 'manual-delete-btn';
                 deleteBtn.textContent = 'Delete Transaction';
                 deleteBtn.className = 'btn-delete';
-                deleteBtn.onclick = () => deleteManualTransaction(index);
+                // Use the new generalized delete function
+                deleteBtn.onclick = () => {
+                    deleteTransaction(index); 
+                    closeModal('manualTransactionModal');
+                };
                 // Insert Delete button before Cancel button
                 actionButtons.insertBefore(deleteBtn, actionButtons.children[1]); 
             }
@@ -1825,7 +1837,7 @@
             const oldT = displayedTransactions[editingTransactionIndex];
             
             // Find the original index in the full 'transactions' array to ensure persistence
-            const originalIndex = transactions.findIndex(t => t.date === oldT.date && t.description === oldT.description && t.originalAmount === oldT.originalAmount);
+            const originalIndex = transactions.findIndex(t => t.date === oldT.date && t.description === oldT.description && t.originalAmount === oldT.originalAmount && t.fileName === oldT.fileName);
             
             Object.assign(oldT, newTransaction); // Update displayed
             if (originalIndex !== -1) {
@@ -1855,30 +1867,38 @@
         applyDateFilter(); 
     }
 
-    function deleteManualTransaction(index) {
-        if (!confirm('Are you sure you want to delete this manual transaction? This action cannot be undone.')) return;
+    // NEW: Generalized delete function
+    function deleteTransaction(index) {
+        if (!confirm('Are you sure you want to delete this transaction? This action cannot be undone.')) return;
         
+        // 1. Get the transaction object from the currently displayed list
         const t = displayedTransactions[index];
 
-        // Find the original index in the full 'transactions' array
-        const originalIndex = transactions.findIndex(origT => origT.date === t.date && origT.description === t.description && origT.originalAmount === t.originalAmount);
+        // 2. Find the original index in the full 'transactions' array to ensure persistence
+        const originalIndex = transactions.findIndex(origT => 
+            origT.date === t.date && 
+            origT.description === t.description && 
+            origT.originalAmount === t.originalAmount && 
+            origT.fileName === t.fileName
+        );
 
         if (originalIndex !== -1) {
+            // 3. Remove from the main data array
             transactions.splice(originalIndex, 1);
             
-            // Decrement the Manual Entry count
-            const manualFile = importedFilesHistory.find(f => f.id === MANUAL_ENTRY_ID);
-            if (manualFile) {
-                manualFile.transactionCount--;
-                // If count drops to zero, remove the file entry
-                if (manualFile.transactionCount <= 0) {
-                     importedFilesHistory = importedFilesHistory.filter(f => f.id !== MANUAL_ENTRY_ID);
+            // 4. If it was a Manual Entry, update the count in the import history
+            if (t.fileName === 'Manual Entry') {
+                const manualFile = importedFilesHistory.find(f => f.id === MANUAL_ENTRY_ID);
+                if (manualFile) {
+                    manualFile.transactionCount--;
+                    if (manualFile.transactionCount <= 0) {
+                         importedFilesHistory = importedFilesHistory.filter(f => f.id !== MANUAL_ENTRY_ID);
+                    }
                 }
             }
         }
 
-        closeModal('manualTransactionModal');
-        // Re-render and update totals
+        // 5. Re-render and update totals
         applyDateFilter();
     }
 
